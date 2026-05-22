@@ -551,9 +551,24 @@ static int rawnand_read_entry(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint6
 
 static int rawnand_read(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64_t nbytes)
 {
+	uint64_t size_chip;
+
 	if (0 == nbytes) {
 		mxic_pr_war("Read bytes = 0, do nothing!\r\n");
 		return MXST_SUCCESS;
+	}
+	if (!buf) {
+		mxic_pr_err("Read buffer is NULL\r\n");
+		return MXST_ERR_PTR_NULL;
+	}
+
+	size_chip = mxmtd->rawnand.memorg.size_chip;
+	if (addr >= size_chip || nbytes > (size_chip - addr)) {
+		mxic_pr_err("Read range exceeds chip size: addr=%08X%08Xh, nbytes=%08X%08Xh, chip=%08X%08Xh\r\n",
+				(uint32_t)(addr >> 32), (uint32_t)addr,
+				(uint32_t)(nbytes >> 32), (uint32_t)nbytes,
+				(uint32_t)(size_chip >> 32), (uint32_t)size_chip);
+		return MXST_ERR_PARAM;
 	}
 
 	mxmtd->rawnand.ecc.ecc_bits_corrected = 0;
@@ -823,9 +838,24 @@ static int rawnand_program_entry(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, ui
 
 static int rawnand_program(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64_t nbytes)
 {
+	uint64_t size_chip;
+
 	if (0 == nbytes) {
 		mxic_pr_war("program bytes = 0, do nothing!\r\n");
 		return MXST_SUCCESS;
+	}
+	if (!buf) {
+		mxic_pr_err("Program buffer is NULL\r\n");
+		return MXST_ERR_PTR_NULL;
+	}
+
+	size_chip = mxmtd->rawnand.memorg.size_chip;
+	if (addr >= size_chip || nbytes > (size_chip - addr)) {
+		mxic_pr_err("Program range exceeds chip size: addr=%08X%08Xh, nbytes=%08X%08Xh, chip=%08X%08Xh\r\n",
+				(uint32_t)(addr >> 32), (uint32_t)addr,
+				(uint32_t)(nbytes >> 32), (uint32_t)nbytes,
+				(uint32_t)(size_chip >> 32), (uint32_t)size_chip);
+		return MXST_ERR_PARAM;
 	}
 
 	switch (mxmtd->rawnand.ecc.type) {
@@ -859,8 +889,23 @@ static int rawnand_program(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64_t
 static int rawnand_erase(mxmtd_t *mxmtd, uint64_t addr, uint64_t nbytes)
 {
 	int ret = MXST_SUCCESS;
+	uint64_t size_chip;
 	uint32_t size_blk = mxmtd->rawnand.memorg.size_blk;
 	uint32_t size_page = mxmtd->rawnand.memorg.size_page;
+
+	if (!nbytes) {
+		mxic_pr_war("Erase bytes = 0, do nothing!\r\n");
+		return MXST_SUCCESS;
+	}
+
+	size_chip = mxmtd->rawnand.memorg.size_chip;
+	if (addr >= size_chip || nbytes > (size_chip - addr)) {
+		mxic_pr_err("Erase range exceeds chip size: addr=%08X%08Xh, nbytes=%08X%08Xh, chip=%08X%08Xh\r\n",
+				(uint32_t)(addr >> 32), (uint32_t)addr,
+				(uint32_t)(nbytes >> 32), (uint32_t)nbytes,
+				(uint32_t)(size_chip >> 32), (uint32_t)size_chip);
+		return MXST_ERR_PARAM;
+	}
 
 	mxic_pr_dbg("Erase, Block: %d\r\n", (uint32_t)(addr >> fmsb32(size_blk)));
 

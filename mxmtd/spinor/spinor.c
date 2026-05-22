@@ -1000,6 +1000,26 @@ static int spinor_read_8d8d8d(cmd_meta_t *cmd_meta, uint64_t addr, uint8_t *buf,
 static int spinor_read(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64_t nbytes)
 {
 	cmd_meta_t *cmd_meta = mxmtd->spinor.cmd_meta;
+	uint64_t size_chip;
+
+	if (!nbytes) {
+		mxic_pr_war("Read bytes = 0, do nothing!\r\n");
+		return MXST_SUCCESS;
+	}
+	if (!buf) {
+		mxic_pr_err("Read buffer is NULL\r\n");
+		return MXST_ERR_PTR_NULL;
+	}
+
+	size_chip = mxmtd->spinor.id_info->size_chip;
+	if (addr >= size_chip || nbytes > (size_chip - addr)) {
+		mxic_pr_err("Read range exceeds chip size: addr=%08X%08Xh, nbytes=%08X%08Xh, chip=%08X%08Xh\r\n",
+				(uint32_t)(addr >> 32), (uint32_t)addr,
+				(uint32_t)(nbytes >> 32), (uint32_t)nbytes,
+				(uint32_t)(size_chip >> 32), (uint32_t)size_chip);
+		return MXST_ERR_PARAM;
+	}
+
 	cmd_meta->cmd_info = &cmd_info_rd[cmd_meta->rd.idx_cmd_num];
 
 	if (PROT_8D_8D_8D == cmd_meta->cmd_info->prot[cmd_meta->spinor_mode]) {
@@ -1036,6 +1056,25 @@ static int spinor_program(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64_t 
 	int ret;
 	uint64_t size_pgm;
 	cmd_meta_t *cmd_meta = mxmtd->spinor.cmd_meta;
+	uint64_t size_chip;
+
+	if (!nbytes) {
+		mxic_pr_war("Program bytes = 0, do nothing!\r\n");
+		return MXST_SUCCESS;
+	}
+	if (!buf) {
+		mxic_pr_err("Program buffer is NULL\r\n");
+		return MXST_ERR_PTR_NULL;
+	}
+
+	size_chip = mxmtd->spinor.id_info->size_chip;
+	if (addr >= size_chip || nbytes > (size_chip - addr)) {
+		mxic_pr_err("Program range exceeds chip size: addr=%08X%08Xh, nbytes=%08X%08Xh, chip=%08X%08Xh\r\n",
+				(uint32_t)(addr >> 32), (uint32_t)addr,
+				(uint32_t)(nbytes >> 32), (uint32_t)nbytes,
+				(uint32_t)(size_chip >> 32), (uint32_t)size_chip);
+		return MXST_ERR_PARAM;
+	}
 
 	cmd_meta->cmd_info = &cmd_info_pgm[cmd_meta->pgm.idx_cmd_num];
 
@@ -1080,6 +1119,21 @@ static int spinor_erase(mxmtd_t *mxmtd, uint64_t addr, uint64_t nbytes)
 {
 	int ret;
 	cmd_meta_t *cmd_meta = mxmtd->spinor.cmd_meta;
+	uint64_t size_chip;
+
+	if (!nbytes) {
+		mxic_pr_war("Erase bytes = 0, do nothing!\r\n");
+		return MXST_SUCCESS;
+	}
+
+	size_chip = mxmtd->spinor.id_info->size_chip;
+	if (addr >= size_chip || nbytes > (size_chip - addr)) {
+		mxic_pr_err("Erase range exceeds chip size: addr=%08X%08Xh, nbytes=%08X%08Xh, chip=%08X%08Xh\r\n",
+				(uint32_t)(addr >> 32), (uint32_t)addr,
+				(uint32_t)(nbytes >> 32), (uint32_t)nbytes,
+				(uint32_t)(size_chip >> 32), (uint32_t)size_chip);
+		return MXST_ERR_PARAM;
+	}
 
 	if (addr % mxmtd->spinor.conf_ers.size) {
 		mxic_pr_err("Address is not allowed with erase size(%08X)\r\n",

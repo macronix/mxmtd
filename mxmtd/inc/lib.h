@@ -40,6 +40,6 @@ static inline int is_le()
 #define H2BE(_host, _bits)		(is_le() ? swap##_bits(_host) : (_host))
 #define H2LE(_host, _bits)		(is_le() ? (_host) : swap##_bits(_host))
 #define BE2H(_big, _bits)		(is_le() ? swap##_bits(_big) : (_big))
-#define LE2H(_little, _bits)	(is_le() ? (_little) : swap##_bits(_big))
+#define LE2H(_little, _bits)	(is_le() ? (_little) : swap##_bits(_little))
 
 #endif
