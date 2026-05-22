@@ -28,6 +28,9 @@
 #define ENHC_DMY_BYTE0  0x69
 #define ENHC_DMY_BYTE1  0x96
 
+/* Safety bound: missing PKT_CTRL_END would otherwise walk off into memory. */
+#define PLATFORM_MAX_PKTS 1024U
+
 static void inline print_pkt(pkt_t *pkt)
 {
 #if PR_LEVEL > 3
@@ -63,14 +66,19 @@ static void inline print_pkt(pkt_t *pkt)
 #endif
 }
 
-static int exec_poll(xfer_info_t *xfer)
+/* Packet-level polling: re-issues the same packet until exp matches or timeout. */
+static int exec_poll(xfer_info_t *xfer, pkt_t *pkt)
 {
 	int ret;
-	uint32_t us = xfer->pkts->poll.timeout_us;
+	uint32_t us = pkt->poll.timeout_us;
 
-	if (!xfer->pkts->data.buf || xfer->pkts->data.len < 1) {
+	if (!pkt->data.buf || pkt->data.len < 1) {
 		mxic_pr_err("Polling requires a valid RX buffer (data.buf) with len >= 1\r\n");
 		return MXST_ERR_PARAM;
+	}
+	if (!us) {
+		mxic_pr_err("Polling timeout is 0 us\r\n");
+		return MXST_ERR_TIMEOUT;
 	}
 
 	do {
@@ -80,28 +88,28 @@ static int exec_poll(xfer_info_t *xfer)
 		}
 
 		mxic_pr_dbg_a("polling, data: %08X, mask: %08X\r\n",
-				xfer->pkts->data.buf[0], xfer->pkts->poll.mask);
+				pkt->data.buf[0], pkt->poll.mask);
 
 		xfer->ops.delay_us(1);
 		us--;
-	} while (xfer->pkts->poll.exp != (xfer->pkts->poll.mask & xfer->pkts->data.buf[0]) && us);
+	} while (pkt->poll.exp != (pkt->poll.mask & pkt->data.buf[0]) && us);
 
-	if (xfer->pkts->poll.exp != (xfer->pkts->poll.mask & xfer->pkts->data.buf[0])) {
+	if (pkt->poll.exp != (pkt->poll.mask & pkt->data.buf[0])) {
 		mxic_pr_err("Polling timeout (%lu us) failed. mask: %02Xh, ret val: %02Xh, exp: %02Xh\r\n",
-				xfer->pkts->poll.timeout_us, xfer->pkts->poll.mask, xfer->pkts->data.buf[0],
-				xfer->pkts->poll.exp);
+				pkt->poll.timeout_us, pkt->poll.mask, pkt->data.buf[0],
+				pkt->poll.exp);
 		return MXST_ERR_TIMEOUT;
 	}
 
 	return MXST_SUCCESS;
 }
 
-static inline int exec_xfer(xfer_info_t *xfer)
+static inline int exec_xfer(xfer_info_t *xfer, pkt_t *pkt)
 {
-	print_pkt(xfer->pkts);
+	print_pkt(pkt);
 
-	if (xfer->pkts->poll_en) {
-		return exec_poll(xfer);
+	if (pkt->poll_en) {
+		return exec_poll(xfer, pkt);
 	}
 	return xfer->ops.xfer(xfer);
 }
@@ -109,18 +117,36 @@ static inline int exec_xfer(xfer_info_t *xfer)
 int platform_xfer(xfer_info_t *xfer)
 {
 	int ret = MXST_SUCCESS;
+	pkt_t *pkt;
+	pkt_t *orig_pkts;
+	uint32_t n = 0;
 
-	while (PKT_CTRL_END != xfer->pkts->pkt_ctrl) {
-		if (PKT_CTRL_SKIP == xfer->pkts->pkt_ctrl) {
-			xfer->pkts++;
+	if (!xfer || !xfer->pkts) {
+		return MXST_ERR_PTR_NULL;
+	}
+
+	orig_pkts = xfer->pkts;
+	pkt = orig_pkts;
+	while (PKT_CTRL_END != pkt->pkt_ctrl) {
+		if (n++ >= PLATFORM_MAX_PKTS) {
+			mxic_pr_err("Packet list missing PKT_CTRL_END (>%u packets)\r\n", PLATFORM_MAX_PKTS);
+			xfer->pkts = orig_pkts;
+			return MXST_ERR_PARAM;
+		}
+		if (PKT_CTRL_SKIP == pkt->pkt_ctrl) {
+			pkt++;
 			continue;
 		}
-		ret = exec_xfer(xfer);
+		xfer->pkts = pkt;
+		ret = exec_xfer(xfer, pkt);
 		if (MXST_SUCCESS != ret) {
 			break;
 		}
-		xfer->pkts++;
+		pkt++;
 	}
+
+	/* Restore original packet pointer for callers that reuse the xfer object. */
+	xfer->pkts = orig_pkts;
 	return ret;
 }
 
