@@ -313,6 +313,7 @@ int spinor_test()
 
 	ret = mxmtd_setup_dev(&mxmtd, FLASH_SPINOR, CH_A, 0);
 	if (MXST_SUCCESS == ret) {
+		flash_dump_info(mxmtd);
 		ret = spinor_testbench(mxmtd);
 	}
 	mxmtd_release(&mxmtd);

@@ -121,6 +121,7 @@ int rawnand_test()
 
 	ret = mxmtd_setup_dev(&mxmtd, FLASH_RAWNAND, CH_B, 0);
 	if (MXST_SUCCESS == ret) {
+		flash_dump_info(mxmtd);
 		ret = rawnand_testbench(mxmtd);
 	}
 	mxmtd_release(&mxmtd);

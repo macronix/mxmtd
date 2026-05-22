@@ -30,6 +30,102 @@
 /* for read and program */
 typedef int (*op_t)(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64_t nbytes);
 
+int flash_dump_info(mxmtd_t *mxmtd)
+{
+	uint64_t chip = 0;
+	uint32_t blk = 0;
+	uint32_t page = 0;
+	uint32_t ers = 0;
+	uint32_t subpage = 0;
+	int ecc_state = 0;
+	uint32_t nblks = 0;
+	uint32_t pages_per_blk = 0;
+
+	if (!mxmtd) {
+		return MXST_ERR_PTR_NULL;
+	}
+
+	if (mxmtd->ops.get_chip_size) {
+		chip = mxmtd->ops.get_chip_size(mxmtd);
+	}
+	if (mxmtd->ops.get_blk_size) {
+		blk = mxmtd->ops.get_blk_size(mxmtd);
+	}
+	if (mxmtd->ops.get_page_size) {
+		page = mxmtd->ops.get_page_size(mxmtd);
+	}
+	if (mxmtd->ops.get_ers_size) {
+		ers = mxmtd->ops.get_ers_size(mxmtd);
+	}
+	if (mxmtd->ops.get_subpage_size) {
+		subpage = mxmtd->ops.get_subpage_size(mxmtd);
+	}
+	if (mxmtd->ops.get_ecc_state) {
+		ecc_state = mxmtd->ops.get_ecc_state(mxmtd);
+	}
+
+	if (chip && blk) {
+		nblks = (uint32_t)(chip / blk);
+	}
+	if (blk && page) {
+		pages_per_blk = blk / page;
+	}
+
+	mxic_pr_inf("\r\n---- Flash Info ----\r\n");
+	mxic_pr_inf("Chip size   : 0x%08X%08X\r\n", (uint32_t)(chip >> 32), (uint32_t)chip);
+	mxic_pr_inf("Block size  : 0x%08X\r\n", blk);
+	mxic_pr_inf("Page size   : 0x%08X\r\n", page);
+	if (ers) {
+		mxic_pr_inf("Erase size  : 0x%08X\r\n", ers);
+	}
+	if (subpage) {
+		mxic_pr_inf("Subpage size: 0x%08X\r\n", subpage);
+	}
+	if (nblks) {
+		mxic_pr_inf("Blocks      : %lu\r\n", (unsigned long)nblks);
+	}
+	if (pages_per_blk) {
+		mxic_pr_inf("Pages/block : %lu\r\n", (unsigned long)pages_per_blk);
+	}
+	mxic_pr_inf("ECC state   : %d\r\n", ecc_state);
+
+	if (mxmtd->ops.nand.get_ecc_strength) {
+		uint8_t strength = mxmtd->ops.nand.get_ecc_strength(mxmtd);
+		uint8_t nsteps = mxmtd->ops.nand.get_ecc_nsteps ? mxmtd->ops.nand.get_ecc_nsteps(mxmtd) : 0;
+		uint16_t step = mxmtd->ops.nand.get_ecc_step_size ? mxmtd->ops.nand.get_ecc_step_size(mxmtd) : 0;
+		mxic_pr_inf("NAND ECC    : strength=%u, steps=%u, step_size=%u\r\n",
+				strength, nsteps, step);
+	}
+
+	if (mxmtd->ops.nand.chk_bb && blk && nblks) {
+		uint32_t scan = nblks;
+		uint32_t bad = 0;
+		uint32_t i;
+		/* Keep startup fast on large chips. */
+		if (scan > 4096) {
+			scan = 4096;
+		}
+		for (i = 0; i < scan; i++) {
+			uint64_t addr = (uint64_t)i * blk;
+			if (mxmtd->ops.nand.chk_bb(mxmtd, addr)) {
+				bad++;
+			}
+		}
+		mxic_pr_inf("Bad blocks  : %lu/%lu scanned%s\r\n",
+				(unsigned long)bad,
+				(unsigned long)scan,
+				scan != nblks ? " (partial)" : "");
+	}
+
+	if (mxmtd->ops.query_lock_mode) {
+		int lock_mode = mxmtd->ops.query_lock_mode(mxmtd);
+		mxic_pr_inf("Lock mode   : %d\r\n", lock_mode);
+	}
+
+	mxic_pr_inf("--------------------\r\n\r\n");
+	return MXST_SUCCESS;
+}
+
 uint32_t check_keyin(uint32_t from, uint32_t to)
 {
 	char line[32];

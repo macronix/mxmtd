@@ -23,6 +23,7 @@
 typedef struct _mxmtd mxmtd_t;
 
 uint32_t check_keyin(uint32_t from, uint32_t to);
+int flash_dump_info(mxmtd_t *mxmtd);
 int flash_nand_nop_test(mxmtd_t *mxmtd, uint32_t blk, uint32_t page, uint8_t npages);
 int flash_nand_error_bit_test(mxmtd_t *mxmtd, uint32_t blk);
 int flash_nand_bb_test(mxmtd_t *mxmtd, uint32_t blk);

@@ -122,6 +122,7 @@ int spinand_test()
 
 	ret = mxmtd_setup_dev(&mxmtd, FLASH_SPINAND, CH_A, 0);
 	if (MXST_SUCCESS == ret) {
+		flash_dump_info(mxmtd);
 		ret = spinand_testbench(mxmtd);
 	}
 	mxmtd_release(&mxmtd);
