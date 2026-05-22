@@ -419,7 +419,7 @@ int flash_nand_error_bit_test(mxmtd_t *mxmtd, uint32_t blk)
 			goto release_flash_nand_error_bit_test;
 		}
 
-		flash_nand_error_inject(mxmtd, buf_wr_err, 1);
+		flash_nand_error_inject(mxmtd, buf_wr_err, n + 1);
 		mxic_pr_inf("-- Inject %d error bit to each step within page\r\n", n + 1);
 		/* Program error bit without ECC */
 		mxmtd->ops.nand.set_ecc_en(mxmtd, 0);
@@ -478,7 +478,7 @@ release_flash_nand_error_bit_test:
 		free(buf_wr);
 	}
 	if (buf_wr_err) {
-		free(buf_wr);
+		free(buf_wr_err);
 	}
 
 	return ret;
@@ -526,7 +526,7 @@ int flash_nand_bb_test(mxmtd_t *mxmtd, uint32_t blk)
 
 int flash_nand_nop_test(mxmtd_t *mxmtd, uint32_t blk, uint32_t page, uint8_t npages)
 {
-	int ret, nop, nop_max = 5000;
+	int ret = MXST_SUCCESS, nop, nop_max = 5000;
 	uint32_t n;
 	uint32_t size_blk = mxmtd->ops.get_blk_size(mxmtd);
 	uint32_t size_page = mxmtd->ops.get_page_size(mxmtd);
@@ -561,12 +561,12 @@ int flash_nand_nop_test(mxmtd_t *mxmtd, uint32_t blk, uint32_t page, uint8_t npa
 
 	mxic_pr_inf("ECC error bits usage status (Max. NOP = %d):\r\n", nop_max);
 	for (nop = 0; nop < nop_max; nop++) {
-		mxmtd->ops.program(mxmtd, addr + page * size_page, buf_wr, size_rw);
+		ret = mxmtd->ops.program(mxmtd, addr + page * size_page, buf_wr, size_rw);
 		if (MXST_SUCCESS != ret) {
 			goto release_flash_nand_nop_test;
 		}
 
-		mxmtd->ops.read(mxmtd, addr + page * size_page, buf_rd, size_rw);
+		ret = mxmtd->ops.read(mxmtd, addr + page * size_page, buf_rd, size_rw);
 		if (MXST_SUCCESS != ret) {
 			goto release_flash_nand_nop_test;
 		}
@@ -729,9 +729,14 @@ int flash_erase_all(mxmtd_t *mxmtd)
 {
 	int ret;
 	uint64_t addr = 0;
+	uint32_t size_blk = mxmtd->ops.get_blk_size(mxmtd);
 
-	for (addr = 0; addr < mxmtd->ops.get_chip_size(mxmtd); addr += mxmtd->ops.get_blk_size(mxmtd)) {
-		ret = mxmtd->ops.erase(mxmtd, addr, mxmtd->ops.get_blk_size(mxmtd));
+	for (addr = 0; addr < mxmtd->ops.get_chip_size(mxmtd); addr += size_blk) {
+		if (mxmtd->ops.nand.chk_bb && mxmtd->ops.nand.chk_bb(mxmtd, addr)) {
+			mxic_pr_war("Skip bad block %lu\r\n", (uint32_t)(addr >> fmsb32(size_blk)));
+			continue;
+		}
+		ret = mxmtd->ops.erase(mxmtd, addr, size_blk);
 		if (MXST_SUCCESS != ret) {
 			return ret;
 		}

@@ -86,7 +86,7 @@ static int rawnand_testbench(mxmtd_t *mxmtd)
 		break;
 	case 8:
 		mxic_pr_inf("Please re-enter '8' to ensure the start of the entire chip erase procedure\r\n");
-		check_keyin(7, 7);
+		check_keyin(8, 8);
 		ret = flash_erase_all(mxmtd);
 		break;
 	case 0:

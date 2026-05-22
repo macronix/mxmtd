@@ -68,6 +68,11 @@ static int exec_poll(xfer_info_t *xfer)
 	int ret;
 	uint32_t us = xfer->pkts->poll.timeout_us;
 
+	if (!xfer->pkts->data.buf || xfer->pkts->data.len < 1) {
+		mxic_pr_err("Polling requires a valid RX buffer (data.buf) with len >= 1\r\n");
+		return MXST_ERR_PARAM;
+	}
+
 	do {
 		ret = xfer->ops.xfer(xfer);
 		if (MXST_SUCCESS != ret) {

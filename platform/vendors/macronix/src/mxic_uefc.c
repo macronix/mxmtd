@@ -36,6 +36,10 @@
 #define ALIGN_BYTES_DMA 4
 #define BYTES_DMA_LIMIT 12
 
+/* Conservative timeouts to avoid hard hangs on HW faults/misconfig */
+#define UEFC_TFR_CTRL_TIMEOUT_US 100000
+#define UEFC_DMA_TIMEOUT_US      1000000
+
 /* Host Controller Register */
 #define HC_CTRL						0x00
 #define HC_CTRL_RQE_EN				BIT(31)
@@ -593,28 +597,68 @@ static int mxic_uefc_poll_hc_reg(xfer_info_t *xfer, uint32_t reg, uint32_t mask)
 	return MXST_SUCCESS;
 }
 
-static void mxic_uefc_cs_start(xfer_info_t *xfer)
+static int mxic_uefc_wait_tfr_ctrl_clear(xfer_info_t *xfer, uint32_t bit, uint32_t timeout_us)
+{
+	while (timeout_us--) {
+		if (!(MXIC_RD32(TFR_CTRL) & bit)) {
+			return MXST_SUCCESS;
+		}
+		xfer->ops.delay_us(1);
+	}
+	mxic_pr_err("TIMEOUT! TFR_CTRL bit(%08Xh) didn't clear\r\n", bit);
+	return MXST_ERR_TIMEOUT;
+}
+
+static int mxic_uefc_wait_dma_done(xfer_info_t *xfer, uint32_t timeout_us)
+{
+	uint32_t reg_int_sts;
+
+	while (timeout_us--) {
+		reg_int_sts = MXIC_RD32(INT_STS);
+
+		if (INT_STS_DMA_INT & reg_int_sts) {
+			/* SDMA boundary interrupt: ack and reload current address */
+			MXIC_WR32(INT_STS_DMA_INT, INT_STS);
+			MXIC_WR32(MXIC_RD32(SDMA_ADDR), SDMA_ADDR);
+		}
+
+		if (INT_STS_DMA_TFR_CMPLT & reg_int_sts) {
+			return MXST_SUCCESS;
+		}
+
+		xfer->ops.delay_us(1);
+	}
+
+	mxic_pr_err("TIMEOUT! DMA transfer didn't complete\r\n");
+	return MXST_ERR_TIMEOUT;
+}
+
+static int mxic_uefc_cs_start(xfer_info_t *xfer)
 {
 	switch (xfer->pkts->cs_ctrl) {
 	case CS_CTRL_REGULAR:
 	case CS_CTRL_ASSERT:
 		/* Assert CS */
 		MXIC_WR32(TFR_CTRL_DEV_ACT, TFR_CTRL);
-		while (TFR_CTRL_DEV_ACT & MXIC_RD32(TFR_CTRL));
-		break;
+		return mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_DEV_ACT, UEFC_TFR_CTRL_TIMEOUT_US);
 	default:
-		break;
+		return MXST_SUCCESS;
 	}
 }
 
-static void mxic_uefc_cs_end(xfer_info_t *xfer)
+static int mxic_uefc_cs_end(xfer_info_t *xfer)
 {
+	int ret;
+
 	switch (xfer->pkts->cs_ctrl) {
 	case CS_CTRL_REGULAR:
 	case CS_CTRL_DEASSERT:
 		/* De-assert CS */
 		MXIC_WR32(TFR_CTRL_DEV_DIS, TFR_CTRL);
-		while (TFR_CTRL_DEV_DIS & MXIC_RD32(TFR_CTRL));
+		ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_DEV_DIS, UEFC_TFR_CTRL_TIMEOUT_US);
+		if (MXST_SUCCESS != ret) {
+			return ret;
+		}
 		break;
 	default:
 		break;
@@ -622,13 +666,13 @@ static void mxic_uefc_cs_end(xfer_info_t *xfer)
 
 	/* Disable IO Mode */
 	MXIC_WR32(TFR_CTRL_IO_END, TFR_CTRL);
-	while (TFR_CTRL_IO_END & MXIC_RD32(TFR_CTRL));
+	return mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_IO_END, UEFC_TFR_CTRL_TIMEOUT_US);
 }
 
 static inline void mxic_uefc_err_dessert_cs(xfer_info_t *xfer)
 {
 	xfer->pkts->cs_ctrl = CS_CTRL_DEASSERT;
-	mxic_uefc_cs_end(xfer);
+	(void)mxic_uefc_cs_end(xfer);
 	xfer->pkts->cs_ctrl = CS_CTRL_REGULAR;
 }
 
@@ -711,9 +755,8 @@ static int mxic_uefc_io_mode_xfer(xfer_info_t *xfer, void *tx, void *rx, uint32_
 static int mxic_uefc_auto_xfer(xfer_info_t *xfer)
 {
 	int ret;
-	uint8_t len_small_data = (xfer->pkts->data.len < BYTES_DMA_LIMIT) ?
-			xfer->pkts->data.len : (xfer->pkts->data.len % ALIGN_BYTES_DMA);
-	uint32_t reg_int_sts;
+	uint32_t tail_len;
+	uint64_t dma_len;
 	uint64_t addr = xfer->pkts->addr.val;
 	uint64_t len_data = xfer->pkts->data.len;
 	uint8_t *buf_data = xfer->pkts->data.buf;
@@ -726,15 +769,25 @@ static int mxic_uefc_auto_xfer(xfer_info_t *xfer)
 
 	/* Enable IO Mode */
 	MXIC_WR32(TFR_CTRL_IO_START, TFR_CTRL);
-	while (TFR_CTRL_IO_START & MXIC_RD32(TFR_CTRL));
+	ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_IO_START, UEFC_TFR_CTRL_TIMEOUT_US);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
-	mxic_uefc_cs_start(xfer);
+	ret = mxic_uefc_cs_start(xfer);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
 	/* Set up command  */
 	if (xfer->pkts->cmd.len) {
 		/* Enable host controller, reset counter */
 		MXIC_WR32(TFR_CTRL_HC_ACT, TFR_CTRL);
-		while (TFR_CTRL_HC_ACT & MXIC_RD32(TFR_CTRL));
+		ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_HC_ACT, UEFC_TFR_CTRL_TIMEOUT_US);
+		if (MXST_SUCCESS != ret) {
+			mxic_uefc_err_dessert_cs(xfer);
+			return ret;
+		}
 
 		ret = mxic_uefc_io_mode_xfer(xfer, (uint8_t *)&xfer->pkts->cmd.val, 0, xfer->pkts->cmd.len,
 				0);
@@ -769,43 +822,46 @@ static int mxic_uefc_auto_xfer(xfer_info_t *xfer)
 		}
 	}
 
-	if (len_small_data) {
-		/* Set up read/write Data */
-		ret = mxic_uefc_io_mode_xfer(xfer,
-				DIR_WR == xfer->pkts->dir ? buf_data : 0,
-				DIR_RD == xfer->pkts->dir ? buf_data : 0,
-				len_small_data, 1);
-		if (MXST_SUCCESS != ret) {
-			mxic_uefc_err_dessert_cs(xfer);
-			return ret;
-		}
-		len_data -= len_small_data;
-		buf_data += len_small_data;
-	}
+	/* For DMA, keep the buffer aligned and send any tail bytes via IO mode. */
+	dma_len = (len_data >= BYTES_DMA_LIMIT) ? (len_data & ~((uint64_t)ALIGN_BYTES_DMA - 1)) : 0;
+	tail_len = (uint32_t)(len_data - dma_len);
 
-	if (len_data) {
+	if (dma_len) {
 		/* Flush D-Cache to DRAM in range used by DMA */
-		Xil_DCacheFlushRange((uint32_t)buf_data, len_data);
+		Xil_DCacheFlushRange((uint32_t)buf_data, dma_len);
 
 		/* Clear DMA_TFR_CMPLT & DMA_INIT in REG_INT_STS */
 		MXIC_WR32(INT_STS_DMA_TFR_CMPLT | INT_STS_DMA_INT, INT_STS);
 
-		MXIC_WR32(len_data, SDMA_CNT);
+		MXIC_WR32(dma_len, SDMA_CNT);
 		MXIC_WR32((uint32_t)buf_data, SDMA_ADDR);
 
-		do {
-			reg_int_sts = MXIC_RD32(INT_STS);
-
-			if (INT_STS_DMA_INT & reg_int_sts) {
-				MXIC_WR32(INT_STS_DMA_INT, INT_STS);
-				MXIC_WR32(MXIC_RD32(SDMA_ADDR), SDMA_ADDR);
-			}
-		} while (!(INT_STS_DMA_TFR_CMPLT & reg_int_sts));
+		ret = mxic_uefc_wait_dma_done(xfer, UEFC_DMA_TIMEOUT_US);
+		if (MXST_SUCCESS != ret) {
+			mxic_uefc_err_dessert_cs(xfer);
+			return ret;
+		}
 
 		/* Disable D-Cache */
-		Xil_DCacheInvalidateRange((uint32_t)buf_data, len_data);
+		Xil_DCacheInvalidateRange((uint32_t)buf_data, dma_len);
+
+		buf_data += dma_len;
 	}
-	mxic_uefc_cs_end(xfer);
+
+	if (tail_len) {
+		ret = mxic_uefc_io_mode_xfer(xfer,
+				DIR_WR == xfer->pkts->dir ? buf_data : 0,
+				DIR_RD == xfer->pkts->dir ? buf_data : 0,
+				tail_len, 1);
+		if (MXST_SUCCESS != ret) {
+			mxic_uefc_err_dessert_cs(xfer);
+			return ret;
+		}
+	}
+	ret = mxic_uefc_cs_end(xfer);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
 	return MXST_SUCCESS;
 }
@@ -824,15 +880,25 @@ static int mxic_uefc_io_mode(xfer_info_t *xfer)
 
 	/* Enable IO Mode */
 	MXIC_WR32(TFR_CTRL_IO_START, TFR_CTRL);
-	while (TFR_CTRL_IO_START & MXIC_RD32(TFR_CTRL));
+	ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_IO_START, UEFC_TFR_CTRL_TIMEOUT_US);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
-	mxic_uefc_cs_start(xfer);
+	ret = mxic_uefc_cs_start(xfer);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
 	/* Set up command  */
 	if (xfer->pkts->cmd.len) {
 		/* Enable host controller, reset counter */
 		MXIC_WR32(TFR_CTRL_HC_ACT, TFR_CTRL);
-		while (TFR_CTRL_HC_ACT & MXIC_RD32(TFR_CTRL));
+		ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_HC_ACT, UEFC_TFR_CTRL_TIMEOUT_US);
+		if (MXST_SUCCESS != ret) {
+			mxic_uefc_err_dessert_cs(xfer);
+			return ret;
+		}
 
 		ret = mxic_uefc_io_mode_xfer(xfer, (uint8_t *)&xfer->pkts->cmd.val, 0, xfer->pkts->cmd.len,
 				0);
@@ -878,13 +944,17 @@ static int mxic_uefc_io_mode(xfer_info_t *xfer)
 		}
 	}
 
-	mxic_uefc_cs_end(xfer);
+	ret = mxic_uefc_cs_end(xfer);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
 	return MXST_SUCCESS;
 }
 
 static int mxic_uefc_map_mode(xfer_info_t *xfer)
 {
+	int ret;
 	uint32_t addr = (uint32_t)xfer->pkts->addr.val;
 
 	if (addr % ALIGN_BYTES_MAP || (addr + xfer->pkts->data.len) % ALIGN_BYTES_MAP) {
@@ -894,12 +964,18 @@ static int mxic_uefc_map_mode(xfer_info_t *xfer)
 
 	/* Disable IO Mode */
 	MXIC_WR32(TFR_CTRL_IO_END, TFR_CTRL);
-	while (TFR_CTRL_IO_END & MXIC_RD32(TFR_CTRL));
+	ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_IO_END, UEFC_TFR_CTRL_TIMEOUT_US);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
 	if (DIR_RD == xfer->pkts->dir) {
 		MXIC_WR32(mxic_uefc_conf(xfer, 0), MAP_RD_CTRL);
 		MXIC_WR32(xfer->pkts->cmd.val, MAP_CMD_REG);
 
+		/* NOTE: mapping region cacheability is platform/MMU dependent. If it's cacheable,
+		 * stale reads are possible without cache maintenance.
+		 */
 		memcpy(xfer->pkts->data.buf, (void *)(xfer->base_addr_map + addr), xfer->pkts->data.len);
 
 	} else {
@@ -916,7 +992,6 @@ static int mxic_uefc_dma_master_mode(xfer_info_t *xfer)
 {
 	int ret;
 	uint8_t dummy_len;
-	uint32_t reg_int_sts;
 	uint64_t addr = xfer->pkts->addr.val;
 
 	if (addr % ALIGN_BYTES_DMA || (addr + xfer->pkts->data.len) % ALIGN_BYTES_DMA) {
@@ -934,15 +1009,25 @@ static int mxic_uefc_dma_master_mode(xfer_info_t *xfer)
 
 	/* Enable IO Mode */
 	MXIC_WR32(TFR_CTRL_IO_START, TFR_CTRL);
-	while (TFR_CTRL_IO_START & MXIC_RD32(TFR_CTRL));
+	ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_IO_START, UEFC_TFR_CTRL_TIMEOUT_US);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
-	mxic_uefc_cs_start(xfer);
+	ret = mxic_uefc_cs_start(xfer);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
 	/* Set up command  */
 	if (xfer->pkts->cmd.len) {
 		/* Enable host controller, reset counter */
 		MXIC_WR32(TFR_CTRL_HC_ACT, TFR_CTRL);
-		while (TFR_CTRL_HC_ACT & MXIC_RD32(TFR_CTRL));
+		ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_HC_ACT, UEFC_TFR_CTRL_TIMEOUT_US);
+		if (MXST_SUCCESS != ret) {
+			mxic_uefc_err_dessert_cs(xfer);
+			return ret;
+		}
 
 		ret = mxic_uefc_io_mode_xfer(xfer, (uint8_t *)&xfer->pkts->cmd.val, 0, xfer->pkts->cmd.len,
 				0);
@@ -980,20 +1065,19 @@ static int mxic_uefc_dma_master_mode(xfer_info_t *xfer)
 		MXIC_WR32(xfer->pkts->data.len, SDMA_CNT);
 		MXIC_WR32((uint32_t)xfer->pkts->data.buf, SDMA_ADDR);
 
-		do {
-			reg_int_sts = MXIC_RD32(INT_STS);
-
-			if (INT_STS_DMA_INT & reg_int_sts) {
-				MXIC_WR32(INT_STS_DMA_INT, INT_STS);
-				MXIC_WR32(MXIC_RD32(SDMA_ADDR), SDMA_ADDR);
-			}
-
-		} while (!(INT_STS_DMA_TFR_CMPLT & reg_int_sts));
+		ret = mxic_uefc_wait_dma_done(xfer, UEFC_DMA_TIMEOUT_US);
+		if (MXST_SUCCESS != ret) {
+			mxic_uefc_err_dessert_cs(xfer);
+			return ret;
+		}
 	}
 	/* Disable D-Cache */
 	Xil_DCacheInvalidateRange((uint32_t)xfer->pkts->data.buf , xfer->pkts->data.len);
 
-	mxic_uefc_cs_end(xfer);
+	ret = mxic_uefc_cs_end(xfer);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
 
 	return MXST_SUCCESS;
 }
@@ -1130,6 +1214,7 @@ static int mxic_uefc_cali_dqs_en(xfer_info_t *xfer)
 static int mxic_uefc_xfer(xfer_info_t *xfer)
 {
 	int ret;
+	uint64_t addr;
 
 	if (xfer->hc_busy) {
 		return MXST_ERR_HC_BUSY;
@@ -1146,9 +1231,34 @@ static int mxic_uefc_xfer(xfer_info_t *xfer)
 			ret = mxic_uefc_cali_dqs_dis(xfer);
 		}
 	} else {
+		/* Polling packets are typically small status reads; keep them in IO mode. */
+		if (xfer->pkts->poll_en || !xfer->pkts->data.len) {
+			ret = mxic_uefc_io_mode(xfer);
+			goto out;
+		}
+
+		addr = xfer->pkts->addr.val;
+		/* Prefer mapping mode when the address range fits the mapping window. */
+		if (xfer->pkts->addr.len &&
+			(addr + xfer->pkts->data.len) <= xfer->max_map_size &&
+			(uint32_t)addr == addr) {
+			ret = mxic_uefc_map_mode(xfer);
+			if (MXST_SUCCESS == ret) {
+				goto out;
+			}
+		}
+
+		/* Prefer DMA for larger buffers when the host buffer is aligned. */
+		if (!((uint32_t)xfer->pkts->data.buf & (ALIGN_BYTES_DMA - 1)) &&
+			xfer->pkts->data.len >= BYTES_DMA_LIMIT) {
+			ret = mxic_uefc_auto_xfer(xfer);
+			goto out;
+		}
+
 		ret = mxic_uefc_io_mode(xfer);
-//		ret = mxic_uefc_auto_xfer(xfer);
 	}
+
+out:
 	xfer->hc_busy = 0;
 	return ret;
 }
@@ -1328,7 +1438,11 @@ static int mxic_uefc_init(xfer_info_t *xfer, int ch_type, int port)
 
 	/* Enable host controller, reset counter */
 	MXIC_WR32(TFR_CTRL_HC_ACT, TFR_CTRL);
-	while (TFR_CTRL_HC_ACT & MXIC_RD32(TFR_CTRL));
+	ret = mxic_uefc_wait_tfr_ctrl_clear(xfer, TFR_CTRL_HC_ACT, UEFC_TFR_CTRL_TIMEOUT_US);
+	if (MXST_SUCCESS != ret) {
+		return ret;
+	}
+
 
 
 	return MXST_SUCCESS;

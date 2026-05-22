@@ -39,8 +39,10 @@
 	/* Specified erase size of spi nor */
 	#define CONF_ERS_SIZE ERS_SIZE_64KB
 
-	/* Write WPSEL in Security Register. Please note that this is an OTP bit !*/
-	#define CONF_ENABLE_ASP
+	/* Write WPSEL in Security Register. Please note that this is an OTP bit!
+	 * Keep ASP disabled by default; only enable for workflows that explicitly intend permanent device changes.
+	 */
+	// #define CONF_ENABLE_ASP
 #endif /* #ifdef CONF_SPINOR */
 
 /* ------ SPINAND Configuration------ */
