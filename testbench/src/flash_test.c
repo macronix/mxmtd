@@ -17,6 +17,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include <sys/time.h>
 #include <malloc.h>
 #include "mxmtd.h"
@@ -31,22 +32,40 @@ typedef int (*op_t)(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64_t nbytes
 
 uint32_t check_keyin(uint32_t from, uint32_t to)
 {
-	uint32_t i;
+	char line[32];
+	unsigned long v;
+	char *end;
 
-	do {
-		char c;
-
-		if (1 == scanf("%lu", &i)) {
-			if (from <= i && to >= i) {
-				mxic_pr_inf("Enter: %lu\r\n", i);
-				break;
-			}
+	while (1) {
+		errno = 0;
+		if (!fgets(line, sizeof(line), stdin)) {
+			mxic_pr_inf("Invalid input, please enter a valid integer\r\n");
+			clearerr(stdin);
+			continue;
 		}
-		while ((c = getchar()) != '\r' && c != '\n' && c != EOF);
-		mxic_pr_inf("Invalid input, please enter a valid integer\r\n");
-	} while (1);
 
-	return i;
+		end = 0;
+		v = strtoul(line, &end, 10);
+		if (errno || end == line) {
+			mxic_pr_inf("Invalid input, please enter a valid integer\r\n");
+			continue;
+		}
+		/* Allow trailing whitespace/newline only. */
+		while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') {
+			end++;
+		}
+		if (*end != '\0') {
+			mxic_pr_inf("Invalid input, please enter a valid integer\r\n");
+			continue;
+		}
+		if (v < from || v > to) {
+			mxic_pr_inf("Out of range (%lu..%lu), try again\r\n", (unsigned long)from, (unsigned long)to);
+			continue;
+		}
+
+		mxic_pr_inf("Enter: %lu\r\n", v);
+		return (uint32_t)v;
+	}
 }
 
 static void elapsed_time(uint32_t size_data, struct timeval *start, struct timeval *stop, char *msg)

@@ -269,15 +269,12 @@ static int spinor_testbench(mxmtd_t *mxmtd)
 		break;
 	case 5:
 		mxic_pr_inf("Please re-enter '5' to ensure the start of the entire chip erase procedure\r\n");
-		n = check_keyin(0, 6);
-		if (5 == n) {
-			ret = flash_erase_all(mxmtd);
-		} else {
-			mxic_pr_inf("Exit Erase all blocks\r\n");
-		}
+		check_keyin(5, 5);
+		ret = flash_erase_all(mxmtd);
 		break;
 	case 6:
 		if (0 == mxmtd->spinor.wpsel) {
+			mxic_pr_war("WPSEL in security register may be OTP/irreversible\r\n");
 			mxic_pr_inf("Please enter 1 to write WPSEL in security register:\r\n");
 			n  = check_keyin(0, 1);
 			if (1 == n) {
