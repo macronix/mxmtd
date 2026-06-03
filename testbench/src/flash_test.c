@@ -755,7 +755,11 @@ int flash_random_test(mxmtd_t *mxmtd, uint32_t ntimes)
 		}
 
 		addr += rand() % size_blk;
-		nbytes = rand() % (size_blk - (addr % size_blk));
+		// addr -= addr % 4;
+
+		uint32_t remain = size_blk - (addr % size_blk);
+		/* 確保 nbytes 範圍在 1 到 remain 之間 */
+		nbytes = (rand() % remain) + 1;
 
 		if (0 == (m & 63) || (ntimes - 1) == m) {
 			mxic_pr_inf("Flash Random Test @ %d\r\n", m);

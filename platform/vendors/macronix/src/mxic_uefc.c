@@ -1237,25 +1237,27 @@ static int mxic_uefc_xfer(xfer_info_t *xfer)
 			goto out;
 		}
 
-		addr = xfer->pkts->addr.val;
-		/* Prefer mapping mode when the address range fits the mapping window. */
-		if (xfer->pkts->addr.len &&
-			(addr + xfer->pkts->data.len) <= xfer->max_map_size &&
-			(uint32_t)addr == addr) {
-			ret = mxic_uefc_map_mode(xfer);
-			if (MXST_SUCCESS == ret) {
-				goto out;
-			}
-		}
+		// addr = xfer->pkts->addr.val;
+		// /* Prefer mapping mode when the address range fits the mapping window. */
+		// if (xfer->pkts->addr.len &&
+		// 	(addr + xfer->pkts->data.len) <= xfer->max_map_size &&
+		// 	(uint32_t)addr == addr) {
+		// 	ret = mxic_uefc_map_mode(xfer);
+		// 	if (MXST_SUCCESS == ret) {
+		// 		goto out;
+		// 	}
+		// }
 
-		/* Prefer DMA for larger buffers when the host buffer is aligned. */
-		if (!((uint32_t)xfer->pkts->data.buf & (ALIGN_BYTES_DMA - 1)) &&
-			xfer->pkts->data.len >= BYTES_DMA_LIMIT) {
-			ret = mxic_uefc_auto_xfer(xfer);
-			goto out;
-		}
-
-		ret = mxic_uefc_io_mode(xfer);
+		// /* Prefer DMA for larger buffers when the host buffer is aligned. */
+		// if (!((uint32_t)xfer->pkts->data.buf & (ALIGN_BYTES_DMA - 1)) &&
+		// 	xfer->pkts->data.len >= BYTES_DMA_LIMIT) {
+		// 	ret = mxic_uefc_auto_xfer(xfer);
+		// 	goto out;
+		// }
+		if ((xfer->pkts->data.len % 4 ==0) && (xfer->pkts->data.len != 0))
+			ret = mxic_uefc_dma_master_mode(xfer);
+		else
+			ret = mxic_uefc_io_mode(xfer);
 	}
 
 out:
