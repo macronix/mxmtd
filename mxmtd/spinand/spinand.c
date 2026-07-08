@@ -20,7 +20,6 @@
  * special read retry
  * randomizer
  * 4 io read/program
- * SPCL_PLANE_SEL_PROG
  */
 
 #include "mxmtd_config.h"
@@ -598,6 +597,11 @@ static int spinand_read_oob(mxmtd_t *mxmtd, uint64_t addr, uint32_t ofs_oob, uin
 		return ret;
 	}
 
+	if (snand->id_info && (SPCL_PLANE_SEL_READ & snand->id_info->flag_spcl)) {
+		col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+				<< (fmsb32(snand->memorg.size_page) + 1);
+	}
+
 	return cmd_spinand_read_cache(mxmtd->priv, col, LEN_COLUMN, &snand->buf_oob[ofs_oob], nbytes);
 }
 
@@ -637,6 +641,11 @@ static int spinand_unalign_read(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uin
 		goto release_spinand_unalign_read;
 	}
 
+	if (snand->id_info && (SPCL_PLANE_SEL_READ & snand->id_info->flag_spcl)) {
+		col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+				<< (fmsb32(snand->memorg.size_page) + 1);
+	}
+
 	ret = cmd_spinand_read_cache(mxmtd->priv, col, LEN_COLUMN, buf_data, remain);
 	if (MXST_SUCCESS != ret) {
 		goto release_spinand_unalign_read;
@@ -648,6 +657,10 @@ static int spinand_unalign_read(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uin
 
 		buf_oob = ofs_oob + snand->buf_oob;
 		col_oob = ofs_oob + snand->memorg.size_page;
+		if (snand->id_info && (SPCL_PLANE_SEL_READ & snand->id_info->flag_spcl)) {
+			col_oob |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+					<< (fmsb32(snand->memorg.size_page) + 1);
+		}
 		remain = nsteps_rd * snand->ecc.nbytes;
 
 		ret = cmd_spinand_read_cache(mxmtd->priv, col_oob, LEN_COLUMN, buf_oob, remain);
@@ -699,6 +712,11 @@ static int spinand_page_read(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint64
 		return ret;
 	}
 
+	if (snand->id_info && (SPCL_PLANE_SEL_READ & snand->id_info->flag_spcl)) {
+		col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+				<< (fmsb32(snand->memorg.size_page) + 1);
+	}
+
 	ret = cmd_spinand_read_cache(mxmtd->priv, col, LEN_COLUMN, buf_data, nbytes + nbytes_oob);
 	if (MXST_SUCCESS != ret) {
 		return ret;
@@ -745,7 +763,15 @@ static int spinand_cache_read_seq(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, u
 			return ret;
 		}
 
-		ret = cmd_spinand_read_cache_seq(mxmtd->priv, 0, LEN_COLUMN, buf_data,
+		/* the page read out is at the current addr, its plane may differ per iteration */
+		uint32_t col = 0;
+
+		row = (uint32_t)(addr >> fmsb32(size_page));
+		if (snand->id_info && (SPCL_PLANE_SEL_READ & snand->id_info->flag_spcl)) {
+			col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+					<< (fmsb32(snand->memorg.size_page) + 1);
+		}
+		ret = cmd_spinand_read_cache_seq(mxmtd->priv, col, LEN_COLUMN, buf_data,
 				nbytes_rd + nbytes_oob, nbytes == nbytes_rd, snand->timing.t_rd_us);
 		if (MXST_SUCCESS != ret) {
 			return ret;
@@ -939,6 +965,11 @@ static int spinand_pgm_oob(mxmtd_t *mxmtd, uint64_t addr, uint32_t ofs_oob, uint
 				ofs_oob, nbytes, snand->memorg.size_oob);
 	}
 
+	if (snand->id_info && (SPCL_PLANE_SEL_PROG & snand->id_info->flag_spcl)) {
+		col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+				<< (fmsb32(snand->memorg.size_page) + 1);
+	}
+
 	ret = cmd_spinand_program_load(mxmtd->priv, col, LEN_COLUMN, &snand->buf_oob[ofs_oob], nbytes);
 	if (MXST_SUCCESS != ret) {
 		return ret;
@@ -987,6 +1018,11 @@ static int spinand_unalign_pgm(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint
 		goto release_spinand_unalign_pgm;
 	}
 
+	if (snand->id_info && (SPCL_PLANE_SEL_PROG & snand->id_info->flag_spcl)) {
+		col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+				<< (fmsb32(snand->memorg.size_page) + 1);
+	}
+
 	ret = cmd_spinand_program_load(mxmtd->priv, col, LEN_COLUMN, buf, nbytes);
 	if (MXST_SUCCESS != ret) {
 		goto release_spinand_unalign_pgm;
@@ -994,6 +1030,10 @@ static int spinand_unalign_pgm(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint
 
 	if (req_oob) {
 		col = snand->memorg.size_page + snand->layout.ecc.ofs + snand->ecc.step_s * snand->ecc.nbytes;
+		if (snand->id_info && (SPCL_PLANE_SEL_PROG & snand->id_info->flag_spcl)) {
+			col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+					<< (fmsb32(snand->memorg.size_page) + 1);
+		}
 		nbytes = nsteps_pgm * snand->ecc.nbytes;
 
 		ret = cmd_spinand_program_load_rnd(mxmtd->priv, col, LEN_COLUMN, buf_oob, nbytes);
@@ -1042,6 +1082,11 @@ static int spinand_page_pgm(mxmtd_t *mxmtd, uint64_t addr, uint8_t *buf, uint32_
 	ret = prev_ecc(mxmtd, buf_data, buf_oob, DIR_PGM);
 	if (MXST_SUCCESS != ret) {
 		return ret;
+	}
+
+	if (snand->id_info && (SPCL_PLANE_SEL_PROG & snand->id_info->flag_spcl)) {
+		col |= ((row >> fmsb32(snand->memorg.npages_per_blk)) & 1)
+				<< (fmsb32(snand->memorg.size_page) + 1);
 	}
 
 	ret = cmd_spinand_program_load(mxmtd->priv, col, LEN_COLUMN, buf_data, nbytes + nbytes_oob);
