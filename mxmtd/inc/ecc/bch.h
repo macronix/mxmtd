@@ -28,7 +28,7 @@ typedef struct {
     uint16_t ecc_bits;
     uint8_t ecc_bytes;
     uint8_t ecc_words;
-    uint8_t size_step;
+    uint16_t size_step;
     uint32_t len;
     uint8_t  le;
     uint16_t *a_pow;
