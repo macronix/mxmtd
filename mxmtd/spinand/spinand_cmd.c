@@ -54,6 +54,7 @@
 #define SPINAND_CMD_RESET				 	0xFF
 #define SPINAND_CMD_DP				 		0xB9
 #define SPINAND_CMD_RDSR					0x05
+#define SPINAND_SR_ADDR                     0xC0
 #define SPINAND_CMD_ECC_SR_READ		 		0x7C
 #define SPINAND_CMD_BBM_WRITE		 		0xA1
 #define SPINAND_CMD_BBM_READ		 		0xA5
@@ -128,7 +129,7 @@ int cmd_spinand_reset(xfer_info_t *xfer, uint8_t *sr)
 
     PKTS(xfer->pkts,
         {SET_PROT_WR(SPINAND_CMD_RESET, 1, 0, 0, 0, 0)},
-		{SET_PROT_RD(SPINAND_CMD_RDSR, 1, 0, 0, 0, sr, 1),
+		{SET_PROT_RD(SPINAND_CMD_GET_FEATURE, 1, SPINAND_SR_ADDR, 1, 0, sr, 1),
 				SET_POLL(SR_OIP | SR_CRBSY, 0, timeout_us)}
     );
 
@@ -177,7 +178,7 @@ int cmd_spinand_block_erase(xfer_info_t *xfer, uint32_t addr, uint8_t len_addr, 
     PKTS(xfer->pkts,
     	{SET_PROT_WR(SPINAND_CMD_WREN, 1, 0, 0, 0, 0)},
         {SET_PROT_WR(SPINAND_CMD_BE, 1, addr, len_addr, 0, 0)},
-		{SET_PROT_RD(SPINAND_CMD_RDSR, 1, 0, 0, 0, sr, 1),
+		{SET_PROT_RD(SPINAND_CMD_GET_FEATURE, 1, SPINAND_SR_ADDR, 1, 0, sr, 1),
 				SET_POLL(SR_OIP | SR_WEL, 0, timeout_us)}
     );
 
@@ -210,7 +211,7 @@ int cmd_spinand_program_execute(xfer_info_t *xfer, uint32_t row, uint8_t len_row
 {
     PKTS(xfer->pkts,
         {SET_PROT_WR(SPINAND_CMD_PROGRAM_EXEC, 1, row, len_row, 0, 0)},
-		{SET_PROT_RD(SPINAND_CMD_RDSR, 1, 0, 0, 0, sr, 1),
+		{SET_PROT_RD(SPINAND_CMD_GET_FEATURE, 1, SPINAND_SR_ADDR, 1, 0, sr, 1),
             SET_POLL(SR_OIP | SR_CRBSY | SR_WEL, 0, timeout_us)}
     );
 
@@ -223,7 +224,7 @@ int cmd_spinand_page_read(xfer_info_t *xfer, uint32_t row, uint8_t len_row, uint
 
     PKTS(xfer->pkts,
         {SET_PROT_WR(SPINAND_CMD_READ, 1, row, len_row, 0, 0)},
-		{SET_PROT_RD(SPINAND_CMD_RDSR, 1, 0, 0, 0, &sr, 1),
+		{SET_PROT_RD(SPINAND_CMD_GET_FEATURE, 1, SPINAND_SR_ADDR, 1, 0, &sr, 1),
 				SET_POLL(SR_OIP | SR_CRBSY, 0, timeout_us)}
     );
 
@@ -247,7 +248,7 @@ int cmd_spinand_read_cache_seq(xfer_info_t *xfer, uint32_t col, uint8_t len_col,
 
     PKTS(xfer->pkts,
         {SET_PROT_WR(SPINAND_CMD_READ_CACHE_SEQUENTIAL, 1, 0, 0, 0, 0)},
-		{SET_PROT_RD(SPINAND_CMD_RDSR, 1, 0, 0, 0, &sr, 1),
+		{SET_PROT_RD(SPINAND_CMD_GET_FEATURE, 1, SPINAND_SR_ADDR, 1, 0, &sr, 1),
 				SET_POLL(SR_OIP | SR_CRBSY, 0, timeout_us)},
     	{SET_PROT_RD(SPINAND_CMD_READ_CACHE, 1, col, len_col, 8, buf, nbytes)}
     );
@@ -268,7 +269,7 @@ int cmd_spinand_param_page_read(xfer_info_t *xfer, uint8_t *buf, uint32_t nbytes
     PKTS(xfer->pkts,
         {SET_PROT_WR(SPINAND_CMD_SET_FEATURE, 1, ADDR_CR_B0, 1, &pp[0], 1)},
 		{SET_PROT_WR(SPINAND_CMD_READ, 1, 0x000001, 3, 0, 0)},
-		{SET_PROT_RD(SPINAND_CMD_RDSR, 1, 0, 0, 0, &sr, 1),
+		{SET_PROT_RD(SPINAND_CMD_GET_FEATURE, 1, SPINAND_SR_ADDR, 1, 0, &sr, 1),
 				SET_POLL(SR_OIP | SR_CRBSY, 0, timeout_us)},
 		{SET_PROT_RD(SPINAND_CMD_READ_CACHE, 1, 0x00, 2, 8, buf, nbytes)},
 		{SET_PROT_WR(SPINAND_CMD_SET_FEATURE, 1, ADDR_CR_B0, 1, &pp[1], 1)}
